@@ -1,32 +1,52 @@
 # Auto-Encoder
 import numpy
-
 import tensorflow as tf
 from tensorflow.contrib import rnn
-from data
 
-lines = 2
-fo = open("Librispeech/cmvned_feats.ark")
-fans = open("Librispeech/all_prons")
+###############################################################
+#                      Preprocessing                          #
+###############################################################
+# Data Preprocessing is done by DataReader                    #
+# We just simmply load tensorflow API dataset                 #
+# By tensorflow API, read data pipeline, fast, and easily     #
+# Only run in python >= 3.4 and tensorflow >= 1.3             #
+###############################################################
 
+# Load dataset
+filename = 'test.tfrecord'
+dataset = tf.data.TFRecordDataset(filename)
 
-data = []
-line = fo.readline()
-line = fo.readline()
-bb_list = [float(i) for i in line.split(' ') if (i and i!='\n')]
-#fl_list = [float(i) for i in bb_list if i]
-for j in range(lines):
-    length = int(fans.readline().split(' ')[2])
-    print(length)
-    each_word = []
-    for i in range(length):
-        each_word.append( [float(i) for i in bb_list if i])
-    print(each_word)
-    data.append(each_word)
-data = numpy.array(data)
+# Parameters for dataset
+shuffle_buffer_size = 1000
+batch_size = 32
+epoch = 10
 
-# Autoencoder
+def parse_function(serialized_example):
+    features = tf.parse_single_example(serialized_example,
+        features={
+            'speaker': tf.FixedLenFeature( shape = (),dtype = tf.string),
+            'word': tf.FixedLenFeature(shape=(1,), dtype = tf.int64),
+            'phoneList': tf.VarLenFeature( tf.int64),
+            'matrix': tf.VarLenFeature( tf.float32),
+            'matrix_shape':tf.FixedLenFeature(shape=(2,),dtype = tf.int64),
+        })
+    matrix = tf.sparse_tensor_to_dense(features['matrix'])
+    features['matrix_shape'] = tf.cast(features['matrix_shape'], tf.int32)
+    features['matrix'] = tf.reshape(matrix,features['matrix_shape'])
+    return features
 
+dataset = dataset.map(parse_function)
+dataset = dataset.shuffle(shuffle_buffer_size).batch(batch_size).repeat(epoch)
+
+# Create an iterator that can easily train
+iterator = dataset.make_one_shot_iterator()
+next_element = iterator.get_next()
+sess = tf.InteractiveSession()
+
+###############################################################
+#                     Training parameters                     #
+###############################################################
+# Autoencoder training parameters
 learning_rate = 0.001
 training_steps = 10000
 batch_size = 128
@@ -40,6 +60,9 @@ speaker_vec_len = 32 # hidden layer num of features
 phonetic_vec_len = 320
 num_classes = 10 # MNIST total classes (0-9 digits)
 
+##############################################################
+#                        Model                               #
+##############################################################
 Ep_Input= tf.placeholder("float", [None, timesteps, num_input])
 Es_Input= tf.placeholder("float", [None, timesteps, num_input])
 
@@ -54,7 +77,6 @@ biases_De = {'out': tf.Variable(tf.random_normal([39]))}
 
 
 def RNN(x, weights, biases):
-
     # Prepare data shape to match `rnn` function requirements
     # Current data input shape: (batch_size, timesteps, n_input)
     # Required shape: 'timesteps' tensors list of shape (batch_size, n_input)
@@ -114,10 +136,11 @@ AE_solver = tf.train.AdamOptimizer().minimize(AE_loss)
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 
-for it in range(1000000000):
-    
-    
-    X_data = ReadData.next_batch(mb_size)
+#############################################################
+#                    Training Process                       #
+#############################################################
+for it in range(1000):
+    word = sess.run(next_element)
     _, loss1_curr = sess.run([loss1_solver, loss_1], feed_dict{X: X_data, Z: sample_Z(mb_size, Z_dim)})
     _, loss2_curr = sess.run([loss2_solver, loss_2], feed_dict{})
 
