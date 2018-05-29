@@ -1,17 +1,16 @@
 import tensorflow as tf
 
-
+# Load tensorflow API dataset
 filename = 'test.tfrecord'
 dataset = tf.data.TFRecordDataset(filename)
 
-#reader = tf.TFRecordReader() 
-#filename_queue = tf.train.string_input_producer(
-#            [filename], num_epochs=1
-#        )
-#_, serialized_example = reader.read(filename_queue) 
+# Parameters
+shuffle_buffer_size = 1000
+batch_size = 3
+epoch = 1
 
 # by tensorflow API, read data parallel, fast, and easily
-# only run in python >= 3.4
+# only run in python >= 3.4 and tensorflow >= 1.3
 def parse_function(serialized_example):
     features = tf.parse_single_example(serialized_example,
         features={
@@ -29,19 +28,16 @@ def parse_function(serialized_example):
     return features
 
 
-new_dataset = dataset.map(parse_function)
-#new_dataset = new_dataset.padded_batch(4, padded_shapes=[None])
+dataset = dataset.map(parse_function)
+dataset = dataset.shuffle(shuffle_buffer_size).batch(batch_size).repeat(epoch)
 
-#new_dataset = new_dataset.batch(32)
-
-
-# Create a function that can easily call next batch for the implementation 
-# call by iteration
-iterator = new_dataset.make_one_shot_iterator()
+# Create an iterator that can easily train
+iterator = dataset.make_one_shot_iterator()
 next_element = iterator.get_next()
 sess = tf.InteractiveSession()
-word = sess.run(next_element)
-print(word)
+for i in range(5):
+    word = sess.run(next_element)
+    print(word)
 
 '''
 with tf.Session() as sess:

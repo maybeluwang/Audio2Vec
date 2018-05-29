@@ -22,7 +22,7 @@ for j in range(lines):
     length = int(line[2])
     wordNum = int(line[1])
     phoneNum = [int(i) for i in line[3:]]
-    speaker = line[0].split('-')[0]
+    speaker = line[0].split('-')[1]
 
     features={}
     features['speaker'] = tf.train.Feature(bytes_list=tf.train.BytesList(value=[speaker.encode()]))
