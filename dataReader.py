@@ -6,7 +6,7 @@
 import numpy as np
 import tensorflow as tf
 
-lines = 300000
+lines = 11232429
 fo = open("Librispeech/cmvned_feats.ark")
 fans = open("Librispeech/all_prons")
 writer = tf.python_io.TFRecordWriter('%s.tfrecord' %'test')
@@ -15,13 +15,13 @@ data = []
 sentenceNum = ''
 
 for j in range(lines):
-    if j%10000 ==0:
-        print(j)
+    if j%10000 == 0:
+        print("Process to line ", j)
     
     line = fans.readline().split(' ')
     length = int(line[2])
-    wordNum = int(line[1])
-    phoneNum = [int(i) for i in line[3:]]
+    wordNum = int(line[3])
+    phoneNum = [int(i) for i in line[4:]]
     speaker = line[0].split('-')[1]
 
     features={}
