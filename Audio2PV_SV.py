@@ -75,7 +75,7 @@ D_num_hidden = 128
 Ep_Input= tf.placeholder("float", [None, timesteps, num_input])
 Eps_Input= tf.placeholder("float", [None, timesteps, num_input])
 Es_Input= tf.placeholder("float", [None, timesteps, num_input])
-
+Sequence_Length = tf.placeholder("int32", [None])
 
 weights_Ep = {'out': tf.Variable(tf.random_normal([num_hidden, phonetic_vec_len]))}
 biases_Ep = {'out': tf.Variable(tf.random_normal([phonetic_vec_len]))}
@@ -93,7 +93,7 @@ def RNN_phone(x, weights, biases):
         # Get lstm cell output
         outputs, states = tf.nn.dynamic_rnn(lstm_cell_phone, x, dtype=tf.float32)#, time_major=True)
         # Linear activation, using rnn inner loop last output
-        output = states.h
+        output = outputs[:,-1,:]
         return tf.matmul(output, weights['out']) + biases['out']
 
 def RNN_speaker(x, weights, biases):
@@ -105,7 +105,7 @@ def RNN_speaker(x, weights, biases):
         # Get lstm cell output
         outputs, states = tf.nn.dynamic_rnn(lstm_cell_speaker, x, dtype=tf.float32)
         # Linear activation, using rnn inner loop last output
-        output = states.h
+        output = outputs[:,-1,:]
         return tf.matmul(output, weights['out']) + biases['out']
 
 def RNN_decoder(x, weights, biases):
@@ -115,12 +115,15 @@ def RNN_decoder(x, weights, biases):
         # Define a lstm cell with tensorflow
         lstm_cell_decoder = rnn.BasicLSTMCell(num_hidden, forget_bias=1.0)
         # Get lstm cell output
-        outputs, states = tf.nn.dynamic_rnn(lstm_cell_decoder, x, dtype=tf.float32)
-        train_decoder = tf.contrib.seq2seq.BasicDecoder(cell = decoder_cell,initial_state=decoder_intial_state)
-        tf.contrib.seq2seq.dynamic_decode(decoder=training_decoder)
+        #outputs, states = tf.nn.dynamic_rnn(lstm_cell_decoder, x, dtype=tf.float32)
+        decoder_initial_state = lstm_cell_decoder.zero_state(batch_size, dtype=tf.float32)
+
+        training_helper = tf.contrib.seq2seq.TrainingHelper(inputs=x,sequence_length = Sequence_Length,time_major=True)
+        training_decoder = tf.contrib.seq2seq.BasicDecoder(cell = lstm_cell_decoder,initial_state=decoder_initial_state,helper=training_helper)
+        decoder_outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder=training_decoder,maximum_iterations=15)
         # Linear activation, using rnn inner loop last output
-        output = states.h
-        return tf.matmul(output, weights['out']) + biases['out']
+        #output = outputs[:,-1,:]
+        return tf.matmul(decoder_outputs[0], weights['out']) + biases['out']
 
 tf.Graph()
 
@@ -130,10 +133,17 @@ p3_vec = RNN_phone(Es_Input, weights_Ep, biases_Ep)
 s1_vec = RNN_speaker(Eps_Input, weights_Es, biases_Es)
 s2_vec = RNN_speaker(Es_Input, weights_Es, biases_Es)
 ps_vec = tf.concat([p2_vec, s1_vec], axis=1)
-output = RNN_decoder(ps_vec, weights_De, biases_De)
-
+#ps_vec_add = p2_vec+s1_vec
+print(p2_vec.shape)
+print(s1_vec.shape)
+print(ps_vec.shape)
+# decoder input must be 3D
+ps_vec_seq = tf.tile([ps_vec], [timesteps,1,1])
+ps_vec_seq = tf.transpose(ps_vec_seq, perm=[1,0,2])
+print("ps_vec_seq.shape",ps_vec_seq.shape)
+output = RNN_decoder(ps_vec_seq, weights_De, biases_De)
+print("Decoder output.shape", output.shape)
 AE_loss = tf.reduce_mean(tf.square(output - Ep_Input))
-
 # Speaker Discriminator
 D_W1 = tf.Variable(xavier_init([phonetic_vec_len, D_num_hidden ]))
 D_b1 = tf.Variable(tf.zeros(shape=[D_num_hidden ]))
@@ -182,17 +192,19 @@ saver = tf.train.Saver()
 #                    Training Process                       #
 #############################################################
 signal =sess.run(next_element)['matrix']
+sequence_length = np.ones((batch_size), dtype=int) * timesteps
+print(sequence_length)
 print("HERE")
 for it in range(10000):
     prev_element = signal
     signal = sess.run(next_element)['matrix']
     rand_spk = sess.run(next_spk)['matrix']
 
-    _, loss1_curr = sess.run([loss1_solver, loss_1], feed_dict={Ep_Input:rand_spk,Eps_Input:signal,Es_Input:prev_element})
-    _, loss2_curr = sess.run([loss2_solver, loss_2], feed_dict={Ep_Input:rand_spk,Eps_Input:signal,Es_Input:prev_element})
+    _, loss1_curr = sess.run([loss1_solver, loss_1], feed_dict={Ep_Input:rand_spk, Eps_Input:signal, Es_Input:prev_element, Sequence_Length:sequence_length})
+    _, loss2_curr = sess.run([loss2_solver, loss_2], feed_dict={Ep_Input:rand_spk, Eps_Input:signal, Es_Input:prev_element, Sequence_Length:sequence_length})
 
     if it % 2 == 0:
-        _, AE_loss_curr = sess.run([AE_solver, AE_loss], feed_dict={Ep_Input:rand_spk,Eps_Input:signal,Es_Input:prev_element})
+        _, AE_loss_curr = sess.run([AE_solver, AE_loss], feed_dict={Ep_Input:rand_spk,Eps_Input:signal,Es_Input:prev_element, Sequence_Length : sequence_length})
 
     if it % 1000 == 0:
         print('Iter: {}'.format(it))
