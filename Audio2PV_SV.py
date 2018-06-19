@@ -1,7 +1,8 @@
 # Auto-Encoder
-import numpy
+import numpy as np
 import tensorflow as tf
 from tensorflow.contrib import rnn
+from tensorflow.python.layers.core import Dense
 
 ###############################################################
 #                      Preprocessing                          #
@@ -114,16 +115,17 @@ def RNN_decoder(x, weights, biases):
     with tf.variable_scope('decoder', reuse=tf.AUTO_REUSE) as de:
         # Define a lstm cell with tensorflow
         lstm_cell_decoder = rnn.BasicLSTMCell(num_hidden, forget_bias=1.0)
+        output_layer = Dense(units=39)
         # Get lstm cell output
         #outputs, states = tf.nn.dynamic_rnn(lstm_cell_decoder, x, dtype=tf.float32)
-        decoder_initial_state = lstm_cell_decoder.zero_state(batch_size, dtype=tf.float32)
+        decoder_initial_state = lstm_cell_decoder.zero_state(tf.shape(x)[0], dtype=tf.float32)
 
-        training_helper = tf.contrib.seq2seq.TrainingHelper(inputs=x,sequence_length = Sequence_Length,time_major=True)
-        training_decoder = tf.contrib.seq2seq.BasicDecoder(cell = lstm_cell_decoder,initial_state=decoder_initial_state,helper=training_helper)
-        decoder_outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder=training_decoder,maximum_iterations=15)
+        training_helper = tf.contrib.seq2seq.TrainingHelper(inputs=x,sequence_length = Sequence_Length,time_major=False)
+        training_decoder = tf.contrib.seq2seq.BasicDecoder(cell = lstm_cell_decoder,initial_state=decoder_initial_state,helper=training_helper,output_layer= output_layer)
+        decoder_outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder=training_decoder,maximum_iterations=timesteps)
         # Linear activation, using rnn inner loop last output
         #output = outputs[:,-1,:]
-        return tf.matmul(decoder_outputs[0], weights['out']) + biases['out']
+        return decoder_outputs.rnn_output#tf.matmul(tf.transpose(decoder_outputs[0],perm = [1,0,2]), weights['out']) + biases['out']
 
 tf.Graph()
 
@@ -142,37 +144,42 @@ ps_vec_seq = tf.tile([ps_vec], [timesteps,1,1])
 ps_vec_seq = tf.transpose(ps_vec_seq, perm=[1,0,2])
 print("ps_vec_seq.shape",ps_vec_seq.shape)
 output = RNN_decoder(ps_vec_seq, weights_De, biases_De)
-print("Decoder output.shape", output.shape)
+print("Decoder output.shape", output)
+#output = tf.transpose(output, perm=[1,0,2])
+
 AE_loss = tf.reduce_mean(tf.square(output - Ep_Input))
 # Speaker Discriminator
-D_W1 = tf.Variable(xavier_init([phonetic_vec_len, D_num_hidden ]))
-D_b1 = tf.Variable(tf.zeros(shape=[D_num_hidden ]))
+D_W1 = {'dis': tf.Variable(tf.random_normal([ phonetic_vec_len*2,39]))}
+#tf.get_variable([phonetic_vec_len, D_num_hidden ],initializer=tf.contrib.layers.xavier_initializer())
+D_b1 = tf.Variable(tf.zeros(shape=[39 ]))
+D_W2 = {'dis': tf.Variable(tf.random_normal([ 39,1]))}
 
-D_W2 = tf.Variable(xavier_init([D_num_hidden , 1]))
+
+#D_W2 = tf.get_variable([30 , 1],initializer=tf.contrib.layers.xavier_initializer())
 D_b2 = tf.Variable(tf.zeros(shape=[1]))
 
 theta_D = [D_W1, D_W2, D_b1, D_b2]
 theta_G = [weights_Ep, biases_Ep]
 
 def discriminator(x):
-    D_h1 = tf.nn.relu(tf.matmul(x, D_W1) + D_b1)
-    D_logit = tf.matmul(D_h1, D_W2) + D_b2
+    D_h1 = tf.nn.relu(tf.matmul(x, D_W1['dis']) + D_b1)
+    D_logit = tf.matmul(D_h1, D_W2['dis']) + D_b2
     D_prob = tf.nn.sigmoid(D_logit)
 
     return D_prob, D_logit
 
 
 # first, concat 2 phonetic vector feed in discriminator
-Same_speaker = tf.concat(p1_vec, s2_vec)
-Diff_speaker = tf.concat(p2_vec, p3_vec) ##changing the order make any sense??
+Same_speaker = tf.concat([p1_vec, p2_vec],axis=1)
+Diff_speaker = tf.concat([p2_vec, p3_vec],axis=1) ##changing the order make any sense??
 
 D_same, D_logit_same = discriminator(Same_speaker)
 D_diff, D_logit_diff = discriminator(Diff_speaker)
 
 # then, train the speaker discriminator
 
-D_loss = -tf.reduce_mean(tf.log(D_same) + tf.log(1. - D_diff))
-G_loss = -tf.reduce_mean(tf.log(D_diff))
+D_loss = -tf.reduce_mean(tf.log(tf.clip_by_value(D_same, 1e-10, 1.0)) + tf.log(tf.clip_by_value(1. - D_diff, 1e-10, 1.0)))
+G_loss = -tf.reduce_mean(tf.log(tf.clip_by_value(D_diff, 1e-10, 1.0)))
 
 # Make Speaker vector as close as possible
 L2_loss = tf.reduce_mean(tf.square(s1_vec - s2_vec))
@@ -193,7 +200,6 @@ saver = tf.train.Saver()
 #############################################################
 signal =sess.run(next_element)['matrix']
 sequence_length = np.ones((batch_size), dtype=int) * timesteps
-print(sequence_length)
 print("HERE")
 for it in range(10000):
     prev_element = signal
@@ -206,14 +212,14 @@ for it in range(10000):
     if it % 2 == 0:
         _, AE_loss_curr = sess.run([AE_solver, AE_loss], feed_dict={Ep_Input:rand_spk,Eps_Input:signal,Es_Input:prev_element, Sequence_Length : sequence_length})
 
-    if it % 1000 == 0:
+    if it % 10 == 0:
         print('Iter: {}'.format(it))
         print('loss1: {:.4}'.format(loss1_curr))
         print('loss2: {:.4}'.format(loss2_curr))
-        print('AE_loss: {:.4}'.format(sess.run(E_loss)))
-        print('L2_loss: {:.4}'.format(sess.run(L2_loss)))
-        print('D_loss: {:.4}'.format(sess.run(D_loss)))
-        print('G_loss: {:.4}'.format(G_loss))
+        print('AE_loss: {:.4}'.format(AE_loss_curr))
+        #print('L2_loss: {:.4}'.format(sess.run(L2_loss)))
+        #print('D_loss: {:.4}'.format(sess.run(D_loss)))
+        #print('G_loss: {:.4}'.format(G_loss))
         save_path = saver.save(sess, "/tmp/model.ckpt")
         print("Model saved in path: %s" % save_path)
 
