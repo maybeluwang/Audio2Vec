@@ -20,7 +20,7 @@ dataset_diffspk = tf.data.TFRecordDataset(filename)
 
 
 # Parameters
-shuffle_buffer_size = 20000
+shuffle_buffer_size = 50000
 batch_size = 16
 epoch = 1
 
@@ -66,7 +66,7 @@ display_step = 200
 num_input = 39 # MFCC inputs (dim = 39)
 timesteps = 400 # timesteps
 num_hidden = 512
-speaker_vec_len = 32 # hidden layer num of features
+speaker_vec_len = 12 # hidden layer num of features
 phonetic_vec_len = 320
 D_num_hidden = 128
 
@@ -135,27 +135,17 @@ p3_vec = RNN_phone(Es_Input, weights_Ep, biases_Ep)
 s1_vec = RNN_speaker(Eps_Input, weights_Es, biases_Es)
 s2_vec = RNN_speaker(Es_Input, weights_Es, biases_Es)
 ps_vec = tf.concat([p2_vec, s1_vec], axis=1)
-#ps_vec_add = p2_vec+s1_vec
-print(p2_vec.shape)
-print(s1_vec.shape)
-print(ps_vec.shape)
-# decoder input must be 3D
 ps_vec_seq = tf.tile([ps_vec], [timesteps,1,1])
 ps_vec_seq = tf.transpose(ps_vec_seq, perm=[1,0,2])
-print("ps_vec_seq.shape",ps_vec_seq.shape)
 output = RNN_decoder(ps_vec_seq, weights_De, biases_De)
-print("Decoder output.shape", output)
-#output = tf.transpose(output, perm=[1,0,2])
 
-AE_loss = tf.reduce_mean(tf.square(output - Ep_Input))
+AE_loss = tf.reduce_mean(tf.square(output - Eps_Input))
 # Speaker Discriminator
 D_W1 = {'dis': tf.Variable(tf.random_normal([ phonetic_vec_len*2,39]))}
-#tf.get_variable([phonetic_vec_len, D_num_hidden ],initializer=tf.contrib.layers.xavier_initializer())
 D_b1 = tf.Variable(tf.zeros(shape=[39 ]))
 D_W2 = {'dis': tf.Variable(tf.random_normal([ 39,1]))}
 
 
-#D_W2 = tf.get_variable([30 , 1],initializer=tf.contrib.layers.xavier_initializer())
 D_b2 = tf.Variable(tf.zeros(shape=[1]))
 
 theta_D = [D_W1, D_W2, D_b1, D_b2]
@@ -184,14 +174,19 @@ G_loss = -tf.reduce_mean(tf.log(tf.clip_by_value(D_diff, 1e-10, 1.0)))
 # Make Speaker vector as close as possible
 L2_loss = tf.reduce_mean(tf.square(s1_vec - s2_vec))
 
-loss_1 = AE_loss + L2_loss + D_loss
+loss_1 = AE_loss + L2_loss + 10*D_loss
 loss_2 = G_loss
 
-loss1_solver = tf.train.AdamOptimizer().minimize(loss_1, var_list = theta_D)
+loss1_solver_D = tf.train.AdamOptimizer().minimize(loss_1, var_list = theta_D)
+loss1_solver = tf.train.AdamOptimizer().minimize(loss_1)
 loss2_solver = tf.train.AdamOptimizer().minimize(loss_2, var_list = theta_G)
-AE_solver = tf.train.AdamOptimizer().minimize(AE_loss)
 
-sess = tf.InteractiveSession()
+AE_solver = tf.train.AdamOptimizer().minimize(AE_loss)
+D_solver = tf.train.AdamOptimizer().minimize(D_loss)
+L2_solver = tf.train.AdamOptimizer().minimize(L2_loss)
+config = tf.ConfigProto()
+config.gpu_options.allow_growth=True
+sess = tf.InteractiveSession(config=config)
 sess.run(tf.global_variables_initializer())
 saver = tf.train.Saver()
 
@@ -200,26 +195,28 @@ saver = tf.train.Saver()
 #############################################################
 signal =sess.run(next_element)['matrix']
 sequence_length = np.ones((batch_size), dtype=int) * timesteps
-print("HERE")
+
 for it in range(10000):
     prev_element = signal
     signal = sess.run(next_element)['matrix']
     rand_spk = sess.run(next_spk)['matrix']
+    _, AE_loss_curr = sess.run([AE_solver, AE_loss], feed_dict={Ep_Input:rand_spk, Eps_Input:signal, Es_Input:prev_element, Sequence_Length:sequence_length})
 
-    _, loss1_curr = sess.run([loss1_solver, loss_1], feed_dict={Ep_Input:rand_spk, Eps_Input:signal, Es_Input:prev_element, Sequence_Length:sequence_length})
+    
+    prev_element = signal
+    signal = sess.run(next_element)['matrix']
+    rand_spk = sess.run(next_spk)['matrix']
+ 
+    _, loss1_curr, L2_loss_curr, D_loss_curr, AE_loss_curr = sess.run([loss1_solver, loss_1, L2_loss, D_loss, AE_loss], feed_dict={Ep_Input:rand_spk, Eps_Input:signal, Es_Input:prev_element, Sequence_Length:sequence_length})
     _, loss2_curr = sess.run([loss2_solver, loss_2], feed_dict={Ep_Input:rand_spk, Eps_Input:signal, Es_Input:prev_element, Sequence_Length:sequence_length})
-
-    if it % 2 == 0:
-        _, AE_loss_curr = sess.run([AE_solver, AE_loss], feed_dict={Ep_Input:rand_spk,Eps_Input:signal,Es_Input:prev_element, Sequence_Length : sequence_length})
-
-    if it % 10 == 0:
+    
+    if it % 50 == 0:
         print('Iter: {}'.format(it))
         print('loss1: {:.4}'.format(loss1_curr))
         print('loss2: {:.4}'.format(loss2_curr))
         print('AE_loss: {:.4}'.format(AE_loss_curr))
-        #print('L2_loss: {:.4}'.format(sess.run(L2_loss)))
-        #print('D_loss: {:.4}'.format(sess.run(D_loss)))
-        #print('G_loss: {:.4}'.format(G_loss))
-        save_path = saver.save(sess, "/tmp/model.ckpt")
+        print('L2_loss: {:.4}'.format(L2_loss_curr))
+        print('D_loss: {:.4}'.format(D_loss_curr))
+        save_path = saver.save(sess, "./tmp/model.ckpt")
         print("Model saved in path: %s" % save_path)
 
